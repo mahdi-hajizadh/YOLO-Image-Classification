@@ -1,5 +1,5 @@
 import streamlit as st
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, UnidentifiedImageError
 from ultralytics import YOLO
 from ultralytics.utils import ASSETS
 
@@ -19,26 +19,29 @@ def load_model():
     return YOLO("yolo26n-cls.pt")
 
 
-model = load_model()
-
 uploaded = st.file_uploader(
     "Upload an image",
     type=["jpg", "jpeg", "png"]
 )
 
-if uploaded is not None:
-    photo = ImageOps.exif_transpose(
-        Image.open(uploaded)
-    ).convert("RGB")
-else:
-    photo = Image.open(
-        ASSETS / "bus.jpg"
-    ).convert("RGB")
-
 if st.button("Classify Image", type="primary"):
-    with st.spinner("Analyzing image..."):
+    source = uploaded if uploaded is not None else ASSETS / "bus.jpg"
+    try:
+        with Image.open(source) as image:
+            if image.format not in {"JPEG", "PNG"} or image.width * image.height > 25_000_000:
+                st.error("Use a JPEG or PNG image with at most 25 megapixels.")
+                st.stop()
+            photo = ImageOps.exif_transpose(image).convert("RGB")
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
+        st.error("Could not read the image. Try a valid JPEG or PNG file.")
+        st.stop()
 
-        result = model(photo, verbose=False)[0]
+    with st.spinner("Analyzing image..."):
+        try:
+            result = load_model()(photo, verbose=False)[0]
+        except (OSError, RuntimeError, ValueError):
+            st.error("Classification could not run. Check that the model and its weights are available.")
+            st.stop()
 
         if result.probs is None:
             st.error("Classification failed.")
@@ -55,7 +58,7 @@ if st.button("Classify Image", type="primary"):
     left, right = st.columns(2)
 
     with left:
-        st.subheader("Uploaded Image")
+        st.subheader("Input image")
         st.image(photo, use_container_width=True)
 
     with right:
